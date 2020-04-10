@@ -1,7 +1,0 @@
-Thumbs.db
-.DS_Store
-node_modules/
-templates/
-public/
-issues.json
-package-lock.json
