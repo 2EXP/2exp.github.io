@@ -1,0 +1,108 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<link rel="shortcut icon" href="favicon.png" type="image/x-icon">
+<meta name="keywords" content="" />
+<meta name="description" content="Why is the pigeon so big" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.10.2/dist/katex.min.css" crossorigin="anonymous" />
+<link rel="stylesheet" href="/assets/style.css" />
+
+<title>
+2EXP / 基于 pixie-dust attack 的一次无线安全小测试
+</title>
+</head>
+<body>
+
+<div class="menu">
+  <span class="shadow"><button></button></span>
+  <a class="shadow" href="/">2EXP</a>
+  <div class="shadow">
+  
+    <a href="/archives/">archives</a>
+  
+    <a href="/tags/">tags</a>
+  
+    <a href="/about/">about</a>
+  
+  </div>
+</div>
+
+
+<div class="container">
+  <div class="header">
+    <div>
+      
+<p>
+  
+  <a href="/categories/blog/">blog</a>
+  
+  - January 20, 2019
+</p>
+
+      <h2>
+基于 pixie-dust attack 的一次无线安全小测试
+</h2>
+    </div>
+  </div>
+
+  <div class="content">
+    <div>
+    
+<div class="markdown-body">
+<h1>
+  <a href="#无线攻击主流方案概述" id="无线攻击主流方案概述"></a>无线攻击主流方案概述
+</h1><p>整体上分为通用与非通用两类。</p><h2>
+  <a href="#通用" id="通用"></a>通用
+</h2><p>先进行 <a href="https://en.wikipedia.org/wiki/Wi-Fi_deauthentication_attack">Wi-Fi deauthentication attack</a>（使用 <a href="https://github.com/aircrack-ng/aircrack-ng">aircrack-ng</a> 套件中的 aireplay-ng 或其它类似工具），然而通过相关钓鱼工具（如 <a href="https://github.com/wifiphisher/wifiphisher">wifiphisher</a>）欺骗受攻击 AP 的客户端。</p><h2>
+  <a href="#非通用" id="非通用"></a>非通用
+</h2><p>本文将非通用方案分为三类进行说明：<a href="https://en.wikipedia.org/wiki/Wired_Equivalent_Privacy">WEP</a> 攻击方案、基于抓包的 <a href="https://en.wikipedia.org/wiki/Wi-Fi_Protected_Access">WPA</a> 攻击方案、基于 <a href="https://en.wikipedia.org/wiki/Wi-Fi_Protected_Setup">WPS</a> PIN 不安全性的 WPA 攻击方案。（这里 WPA 指 WPA/WPA2，下文一致。)</p><ol>
+<li>WEP：aircrack-ng 套件即可迅速破解，现在也几乎不会有默认使用 WEP 加密方案的路由器了。</li>
+<li>WPA（抓包）：先进行 <a href="https://en.wikipedia.org/wiki/Wi-Fi_deauthentication_attack">Wi-Fi deauthentication attack</a>（aireplay-ng），捕获一定数量 WPA 四路握手包（.cap 文件），然后直接使用 aircrack-ng 套件中的 airodump-ng 跑字典，或者使用 <a href="https://github.com/hashcat/hashcat-utils">cap2hccapx</a> 转换成 .hccapx 文件，使用 <a href="https://github.com/hashcat/hashcat">hashcat</a> 跑字典。后者由于优化算法、硬件加速，会比前者快不少。但是，由于现在人们的密码意识增强，所使用的加密密码复杂程度都相对较高了，路由器厂商默认密码大多是随机的字符数字组合（如光猫），使用抓包跑字典攻击方案的成功率也不高。（当然，大量的时间成本和硬件成本可以提高成功率。）</li>
+<li>WPA（WPS PIN）：该方案只支持开启了 WPS 的 AP，针对 WPS 的攻击工具主要有 <a href="https://github.com/t6x/reaver-wps-fork-t6x">reaver</a> 和 <a href="https://github.com/aanarchyy/bully">bully</a>。传统的在线攻击方案可以借助 reaver 或 bully 简便地实现，信号良好情况下大约 3s/pin（WPS1.0，无锁 PIN 现象）。 PIN 为 8 位，均分为两部分，右半部分有一位为校验位，所以共有 10000+1000=11000 个不同的尝试，时间成本是有界的。但是，现在多数路由器都是 WPS2.0（WSC），会出现锁 PIN 现象。路由器型号不同，锁 PIN 尝试阈值和时长也不同，阈值高，时长短的则对于其安全性提升的意义并不大；而有些路由器在 3-5 次 PIN 尝试后，就锁 PIN 一小时甚至更久。可就算是几次 PIN 尝试的机会，也留给了攻击者可乘之机。有些路由器厂商有默认 PIN，以及少数厂商部分路由器 PIN 根据 BSSID 产生，这是攻击者的尝试对象之一；其次，尝试 pixie-dust attack 方案；（因下文测试家用路由器主要采用该方案，所以留到下文额外解释。）其三，Arbitrary String PIN 尝试，即尝试非标准的带字符的 PIN，甚至是空 PIN。其中，需要使用 Arbitrary String PIN 尝试的一个特征是：无论尝试什么标准 PIN，都会接收到 AP 发送的 M5 信息（接收到 M5 信息在常规情况下说明 PIN 左半部分已经正确）。Arbitrary String PIN 的更多内容见 <a href="https://github.com/t6x/reaver-wps-fork-t6x/wiki/Introducing-a-new-way-to-crack-WPS:-Option--p-with-an-Arbitrary-String">reaver wiki</a> 及其中相关链接。有些路由器在锁 PIN 状态下受到洪流攻击（<a href="https://github.com/aircrack-ng/mdk4">MDK4</a>），会解除锁 PIN，可能伴随着重启。</li>
+</ol>
+<h2>
+  <a href="#pixie-dust attack" id="pixie-dust attack"></a>pixie-dust attack
+</h2><p>pixie-dust attack 是利用路由器芯片随机密钥（nonce）生成的漏洞（详情见 <a href="https://forums.kali.org/showthread.php?24286-WPS-Pixie-Dust-Attack-(Offline-WPS-Attack)">Kali 论坛</a>及论坛中的相关链接），离线破解 WPS PIN 的一种无线攻击方案。可用的攻击工具为 <a href="https://github.com/wiire-a/pixiewps">pixiewps</a>，结合 reaver/bully/Wireshark 使用。根据论坛相关讨论及论坛中测试的<a href="https://docs.google.com/spreadsheets/d/1tSlbqVQ59kGn8hgmwcPTHUECQ3o9YhXR91A_p7Nnj5Y">数据</a>显示，受影响芯片厂商主要为 Broadcom（博通）部分型号、Realtek（瑞昱）、Ralink（雷凌，联发科旗下）、MediaTek（联发科）、Celeno，其它厂商也可能有类似漏洞尚未发现。我个人知道的，Realtek 好像在 2016 年修复了该漏洞，其它的不清楚。如要查询自己设备的参数规格，可通过 <a href="https://wikidevi.com">WikiDevi</a> 查询。</p><h1>
+  <a href="#国内光猫、家用路由器可靠性的一次小测试" id="国内光猫、家用路由器可靠性的一次小测试"></a>国内光猫、家用路由器可靠性的一次小测试
+</h1><p>主要测试针对 pixie-dust attack，家用路由器的可靠性。就只简单测试了下中兴某电信光猫、小米某路由器、华为某路由器（应该是 2017 年的），中兴、小米的是联发科芯片，华为的是 Realtek 芯片。对中兴、小米的攻击迅速见效，华为的好像不行；由于设备有限，得出的结论只能说是个例，而且这更应该说是上游芯片厂商的坑。额外的传统 WPS PIN 在线攻击测试中，中兴光猫、小米路由器都不是常见的锁 PIN，而是直接关掉 WPS，这对于安全性还是有一定提升的，虽然对于前面的离线攻击无法防范。此外，由于中兴的是电信光猫，安全性其实更弱一些，因为 ISP 附带的光猫有默认的超级管理员账号，当攻击者得到了无线密码，直接就可以进入光猫管理 Web 界面，甚至可以 telnet 后以 root 权限进行一系列操作。</p><p>总之，要让家里的无线信号安全可靠，设置较复杂的 WPA 密码，关闭 WPS 很有必要，虽然 WPS 在家里有打印机等外部设备时可能会用到。网上看到好像有些光猫无法关闭 WPS，这样出于安全性考虑的话，应该关闭光猫 AP 功能，另外接一个路由器。</p>
+</div>
+
+<div class="post-tags">
+
+  <a href="/tags/pixie-dust attack/">pixie-dust attack</a>
+
+  <a href="/tags/无线安全/">无线安全</a>
+
+</div>
+
+<div class="post-nav paginator">
+
+<a></a>
+
+
+<a class="nav-next" href="/posts/391460368.html">
+  Transparent Proxy 不同平台的实现方式
+  <svg class="icon" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" width="30" height="30"><defs><style/></defs><path d="M448 672c-6.4 0-19.2 0-25.6-6.4-12.8-12.8-12.8-32 0-44.8L531.2 512 422.4 409.6c-12.8-12.8-12.8-32 0-44.8s32-12.8 44.8 0l128 128c12.8 12.8 12.8 32 0 44.8l-128 128c0 6.4-12.8 6.4-19.2 6.4z"/></svg>
+</a>
+
+</div>
+
+
+    </div>
+  </div>
+
+  <div class="footer">
+  <div>
+    <p>&copy; 2020 2EXP</p>
+    <p>Powered by <a target="_blank" href="https://github.com/acyortjs/acyort">AcyOrt</a></p>
+  </div>
+  <a href="#" class="top">Top</a>
+</div>
+
+</div>
+
+<script src="/assets/script.js"></script>
+</body>
+</html>

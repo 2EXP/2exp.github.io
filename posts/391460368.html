@@ -1,0 +1,786 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<link rel="shortcut icon" href="favicon.png" type="image/x-icon">
+<meta name="keywords" content="" />
+<meta name="description" content="Why is the pigeon so big" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.10.2/dist/katex.min.css" crossorigin="anonymous" />
+<link rel="stylesheet" href="/assets/style.css" />
+
+<title>
+2EXP / Transparent Proxy 不同平台的实现方式
+</title>
+</head>
+<body>
+
+<div class="menu">
+  <span class="shadow"><button></button></span>
+  <a class="shadow" href="/">2EXP</a>
+  <div class="shadow">
+  
+    <a href="/archives/">archives</a>
+  
+    <a href="/tags/">tags</a>
+  
+    <a href="/about/">about</a>
+  
+  </div>
+</div>
+
+
+<div class="container">
+  <div class="header">
+    <div>
+      
+<p>
+  
+  <a href="/categories/blog/">blog</a>
+  
+  - January 03, 2019
+</p>
+
+      <h2>
+Transparent Proxy 不同平台的实现方式
+</h2>
+    </div>
+  </div>
+
+  <div class="content">
+    <div>
+    
+<div class="markdown-body">
+<p>本文是对不同平台不同 IP packet 过滤程序<a href="https://en.wikipedia.org/wiki/Proxy_server#Transparent_proxy">透明代理</a>实现的一些思考，主要考虑过滤规则以及如何在代理程序中获取客户端网络请求的原目标 IP 地址。</p><h1>
+  <a href="#参数、函数的解释" id="参数、函数的解释"></a>参数、函数的解释
+</h1><p>dst_addr：所需获取的目标地址；</p><p>client_addr：客户端请求的源地址，可通过 <a href="https://www.freebsd.org/cgi/man.cgi?query=accept(2)">accept()</a> 获取；</p><p>local_addr：代理程序绑定的地址，在 <a href="https://www.freebsd.org/cgi/man.cgi?query=bind(2)">bind()</a> 调用中传入的地址；</p><p>log_printf()：类比 <a href="https://www.freebsd.org/cgi/man.cgi?query=printf">printf()</a>，只不过用来输出信息至日志文件，这里没有给出具体的实现。</p><h1>
+  <a href="#Netfilter" id="Netfilter"></a>Netfilter
+</h1><p>应用于 Linux kernel 2.4+。</p><h2>
+  <a href="#过滤规则" id="过滤规则"></a>过滤规则
+</h2><p>TCP 过滤规则用了 REDIRECT 规则，UDP 过滤规则用了 TPROXY 规则，TCP 同样也可以使用 TPROXY 规则过滤。需要注意的是，使用 TPROXY 规则时，在写代理程序时需要 <a href="https://www.freebsd.org/cgi/man.cgi?query=setsockopt">setsockopt(IP_TRANSPARENT)</a>，具体见下文 TPROXY 方案获取目标 IP 地址。</p><p>设置规则可参阅 <a href="https://linux.die.net/man/8/iptables">iptables(8)</a>、<a href="https://www.netfilter.org/documentation/index.html#documentation-howto">Netfilter 文档</a>。</p><div class="code-highlight">
+  <table>
+    <tbody>
+      <tr>
+        <td class="code-highlight-line"><pre class="language-none"><code class="language-none"><span>1</span>
+<span>2</span>
+<span>3</span>
+<span>4</span>
+<span>5</span>
+<span>6</span>
+<span>7</span>
+<span>8</span>
+<span>9</span>
+<span>10</span>
+<span>11</span>
+<span>12</span>
+<span>13</span>
+<span>14</span>
+<span>15</span>
+<span>16</span>
+<span>17</span>
+<span>18</span>
+<span>19</span>
+<span>20</span>
+<span>21</span>
+<span>22</span>
+<span>23</span>
+<span>24</span>
+<span>25</span>
+</code></pre></td>
+        <td class="code-highlight-code"><pre class="language-bash"><code class="language-bash"><span class="token comment"># Create TRANSPARENT_PROXY chain</span>
+iptables -t nat -N TRANSPARENT_PROXY
+iptables -t mangle -N TRANSPARENT_PROXY
+
+<span class="token comment"># Bypass remote proxy server addresses</span>
+iptables -t nat -A TRANSPARENT_PROXY -d <span class="token variable">$SERVER_IP</span> -j RETURN
+iptables -t mangle -A TRANSPARENT_PROXY -d <span class="token variable">$SERVER_IP</span> -j RETURN
+
+<span class="token comment"># Bypass LAN and any other addresses if desired</span>
+<span class="token comment"># Here is an example to bypass local identification ip addresses</span>
+iptables -t nat -A TRANSPARENT_PROXY -d <span class="token number">0.0</span>.0.0/8 -j RETURN
+iptables -t mangle -A TRANSPARENT_PROXY -d <span class="token number">0.0</span>.0.0/8 -j RETURN
+
+<span class="token comment"># The remainder should be redirect to local proxy port</span>
+<span class="token comment"># Here assumes local proxy server is running on localhost</span>
+<span class="token comment">## Port forwarding for TCP</span>
+iptables -t nat -A TRANSPARENT_PROXY -p tcp -j REDIRECT --to-ports <span class="token variable">$PROXY_PORT</span>
+<span class="token comment">## Port forwarding for UDP</span>
+<span class="token function">ip</span> rule <span class="token function">add</span> fwmark <span class="token number">1</span> lookup <span class="token number">100</span>
+<span class="token function">ip</span> route <span class="token function">add</span> <span class="token builtin class-name">local</span> <span class="token number">0.0</span>.0.0/0 dev lo table <span class="token number">100</span>
+iptables -t mangle -A TRANSPARENT_PROXY -p udp -j TPROXY --on-port <span class="token variable">$PROXY_PORT</span> --tproxy-mark 0x1/0x1
+
+<span class="token comment"># Add TRANSPARENT_PROXY chain to iptables PREROUTING chain</span>
+iptables -t nat -A PREROUTING -p tcp -j TRANSPARENT_PROXY
+iptables -t mangle -A PREROUTING -p udp -j TRANSPARENT_PROXY</code></pre></td>
+      </tr>
+    </tbody>
+  </table>
+</div><h2>
+  <a href="#获取目标 IP 地址" id="获取目标 IP 地址"></a>获取目标 IP 地址
+</h2><p>使用 TPROXY 方案，获取原目标 IP 地址只需简单调用 <a href="https://www.freebsd.org/cgi/man.cgi?query=getsockname">getsockname()</a>，与下文通过 IPFW 的实现透明代理方案一样。</p><div class="code-highlight">
+  <table>
+    <tbody>
+      <tr>
+        <td class="code-highlight-line"><pre class="language-none"><code class="language-none"><span>1</span>
+<span>2</span>
+<span>3</span>
+<span>4</span>
+<span>5</span>
+<span>6</span>
+<span>7</span>
+<span>8</span>
+<span>9</span>
+<span>10</span>
+<span>11</span>
+<span>12</span>
+<span>13</span>
+<span>14</span>
+<span>15</span>
+<span>16</span>
+<span>17</span>
+<span>18</span>
+<span>19</span>
+<span>20</span>
+<span>21</span>
+<span>22</span>
+<span>23</span>
+<span>24</span>
+</code></pre></td>
+        <td class="code-highlight-code"><pre class="language-c"><code class="language-c"><span class="token macro property">#<span class="token directive keyword">include</span> <span class="token string">&lt;errno.h></span></span>
+<span class="token macro property">#<span class="token directive keyword">include</span> <span class="token string">&lt;string.h></span></span>
+<span class="token macro property">#<span class="token directive keyword">include</span> <span class="token string">&lt;sys/types.h></span></span>
+<span class="token macro property">#<span class="token directive keyword">include</span> <span class="token string">&lt;sys/socket.h></span></span>
+<span class="token macro property">#<span class="token directive keyword">include</span> <span class="token string">&lt;netinet/in.h></span></span>
+
+<span class="token keyword">static</span> <span class="token keyword">int</span> <span class="token function">set_transparent</span><span class="token punctuation">(</span><span class="token keyword">int</span> fd<span class="token punctuation">)</span> <span class="token punctuation">{</span>
+  <span class="token keyword">int</span> opt <span class="token operator">=</span> <span class="token number">1</span><span class="token punctuation">;</span>
+
+  <span class="token keyword">if</span> <span class="token punctuation">(</span><span class="token function">setsockopt</span><span class="token punctuation">(</span>fd<span class="token punctuation">,</span> SOL_IP<span class="token punctuation">,</span> IP_TRANSPARENT<span class="token punctuation">,</span> <span class="token operator">&amp;</span>opt<span class="token punctuation">,</span> <span class="token keyword">sizeof</span><span class="token punctuation">(</span>opt<span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">)</span> <span class="token punctuation">{</span>
+    <span class="token function">log_printf</span><span class="token punctuation">(</span><span class="token string">"%s - setsockopt(IP_TRANSPARENT): %s\n"</span><span class="token punctuation">,</span> <span class="token constant">__func__</span><span class="token punctuation">,</span> <span class="token function">strerror</span><span class="token punctuation">(</span>errno<span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+    <span class="token keyword">return</span> <span class="token operator">-</span><span class="token number">1</span><span class="token punctuation">;</span>
+  <span class="token punctuation">}</span>
+  <span class="token keyword">return</span> <span class="token number">0</span><span class="token punctuation">;</span>
+<span class="token punctuation">}</span>
+
+<span class="token keyword">static</span> <span class="token keyword">int</span>
+<span class="token function">get_dst_addr</span><span class="token punctuation">(</span><span class="token keyword">int</span> fd<span class="token punctuation">,</span> <span class="token keyword">struct</span> <span class="token class-name">sockaddr</span> <span class="token operator">*</span>dst_addr<span class="token punctuation">,</span> socklen_t <span class="token operator">*</span>dst_addrlen<span class="token punctuation">)</span> <span class="token punctuation">{</span>
+  <span class="token keyword">if</span> <span class="token punctuation">(</span><span class="token function">getsockname</span><span class="token punctuation">(</span>fd<span class="token punctuation">,</span> dst_addr<span class="token punctuation">,</span> dst_addrlen<span class="token punctuation">)</span><span class="token punctuation">)</span> <span class="token punctuation">{</span>
+    <span class="token function">log_printf</span><span class="token punctuation">(</span><span class="token string">"%s - getsockname(dst_addr): %s\n"</span><span class="token punctuation">,</span> <span class="token constant">__func__</span><span class="token punctuation">,</span> <span class="token function">strerror</span><span class="token punctuation">(</span>errno<span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+    <span class="token keyword">return</span> <span class="token operator">-</span><span class="token number">1</span><span class="token punctuation">;</span>
+  <span class="token punctuation">}</span>
+  <span class="token keyword">return</span> <span class="token number">0</span><span class="token punctuation">;</span>
+<span class="token punctuation">}</span></code></pre></td>
+      </tr>
+    </tbody>
+  </table>
+</div><p>使用普通方案，则可通过调用 <a href="https://www.freebsd.org/cgi/man.cgi?query=getsockopt">getsockopt(SO_ORIGINAL_DST)</a>（IPv4 地址）和 <a href="https://www.freebsd.org/cgi/man.cgi?query=getsockop">getsockopt(IP6T_SO_ORIGINAL_DST)</a>（IPv6 地址）获取。</p><div class="code-highlight">
+  <table>
+    <tbody>
+      <tr>
+        <td class="code-highlight-line"><pre class="language-none"><code class="language-none"><span>1</span>
+<span>2</span>
+<span>3</span>
+<span>4</span>
+<span>5</span>
+<span>6</span>
+<span>7</span>
+<span>8</span>
+<span>9</span>
+<span>10</span>
+<span>11</span>
+<span>12</span>
+<span>13</span>
+<span>14</span>
+<span>15</span>
+<span>16</span>
+<span>17</span>
+<span>18</span>
+<span>19</span>
+<span>20</span>
+<span>21</span>
+<span>22</span>
+<span>23</span>
+<span>24</span>
+<span>25</span>
+<span>26</span>
+<span>27</span>
+</code></pre></td>
+        <td class="code-highlight-code"><pre class="language-c"><code class="language-c"><span class="token macro property">#<span class="token directive keyword">include</span> <span class="token string">&lt;errno.h></span></span>
+<span class="token macro property">#<span class="token directive keyword">include</span> <span class="token string">&lt;string.h></span></span>
+<span class="token macro property">#<span class="token directive keyword">include</span> <span class="token string">&lt;sys/types.h></span></span>
+<span class="token macro property">#<span class="token directive keyword">include</span> <span class="token string">&lt;sys/socket.h></span></span>
+<span class="token macro property">#<span class="token directive keyword">include</span> <span class="token string">&lt;linux/netfilter_ipv4.h></span></span>
+<span class="token macro property">#<span class="token directive keyword">include</span> <span class="token string">&lt;linux/netfilter_ipv6/ip6_tables.h></span></span>
+
+<span class="token keyword">static</span> <span class="token keyword">int</span>
+<span class="token function">get_dst_addr</span><span class="token punctuation">(</span><span class="token keyword">int</span> fd<span class="token punctuation">,</span> <span class="token keyword">struct</span> <span class="token class-name">sockaddr</span> <span class="token operator">*</span>dst_addr<span class="token punctuation">,</span> socklen_t <span class="token operator">*</span>dst_addrlen<span class="token punctuation">,</span> sa_family_t sa_type<span class="token punctuation">)</span> <span class="token punctuation">{</span>
+  <span class="token keyword">if</span> <span class="token punctuation">(</span>sa_type <span class="token operator">==</span> AF_INET<span class="token punctuation">)</span> <span class="token punctuation">{</span>
+    <span class="token keyword">if</span> <span class="token punctuation">(</span><span class="token function">getsockopt</span><span class="token punctuation">(</span>fd<span class="token punctuation">,</span> SOL_IP<span class="token punctuation">,</span> SO_ORIGINAL_DST<span class="token punctuation">,</span> dst_addr<span class="token punctuation">,</span> dst_addrlen<span class="token punctuation">)</span><span class="token punctuation">)</span> <span class="token punctuation">{</span>
+      <span class="token function">log_printf</span><span class="token punctuation">(</span><span class="token string">"%s - getsockopt(SO_ORIGINAL_DST): %s\n"</span><span class="token punctuation">,</span> <span class="token constant">__func__</span><span class="token punctuation">,</span> <span class="token function">strerror</span><span class="token punctuation">(</span>errno<span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+      <span class="token keyword">return</span> <span class="token operator">-</span><span class="token number">1</span><span class="token punctuation">;</span>
+    <span class="token punctuation">}</span>
+  <span class="token punctuation">}</span> <span class="token keyword">else</span> <span class="token punctuation">{</span>
+<span class="token macro property">#<span class="token directive keyword">ifdef</span> IP6T_SO_ORIGINAL_DST</span>
+    <span class="token keyword">if</span> <span class="token punctuation">(</span><span class="token function">getsockopt</span><span class="token punctuation">(</span>fd<span class="token punctuation">,</span> SOL_IPV6<span class="token punctuation">,</span> IP6T_SO_ORIGINAL_DST<span class="token punctuation">,</span> dst_addr<span class="token punctuation">,</span> dst_addrlen<span class="token punctuation">)</span><span class="token punctuation">)</span> <span class="token punctuation">{</span>
+      <span class="token function">log_printf</span><span class="token punctuation">(</span><span class="token string">"%s - getsockopt(IP6T_SO_ORIGINAL_DST): %s\n"</span><span class="token punctuation">,</span> <span class="token constant">__func__</span><span class="token punctuation">,</span> <span class="token function">strerror</span><span class="token punctuation">(</span>errno<span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+      <span class="token keyword">return</span> <span class="token operator">-</span><span class="token number">1</span><span class="token punctuation">;</span>
+    <span class="token punctuation">}</span>
+<span class="token macro property">#<span class="token directive keyword">else</span></span>
+    <span class="token function">log_printf</span><span class="token punctuation">(</span><span class="token string">"The Netfilter does not support IPv6 NAT lookup.\n"</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+    <span class="token keyword">return</span> <span class="token operator">-</span><span class="token number">1</span><span class="token punctuation">;</span>
+<span class="token macro property">#<span class="token directive keyword">endif</span></span>
+  <span class="token punctuation">}</span>
+  <span class="token keyword">return</span> <span class="token number">0</span><span class="token punctuation">;</span>
+<span class="token punctuation">}</span></code></pre></td>
+      </tr>
+    </tbody>
+  </table>
+</div><h1>
+  <a href="#Packet Filter" id="Packet Filter"></a>Packet Filter
+</h1><p>出自 OpenBSD，应用于 OpenBSD 3.0+、FreeBSD 5.3+、NetBSD 3.0+、Solaris 11.3+、macOS 10.7+、iOS 和 QNX。</p><h2>
+  <a href="#过滤规则" id="过滤规则"></a>过滤规则
+</h2><p>以下规则应用于 TCP 过滤，UDP 过滤可以用同样方式设置，PF 规则具体设置见 <a href="https://www.freebsd.org/cgi/man.cgi?query=pf.conf">pf.conf(5)</a>、<a href="https://www.freebsd.org/doc/handbook/firewalls-pf.html">FreeBSD 相关文档</a>。FreeBSD 中使用的 PF 是 OpenBSD 4.5 的版本。OpenBSD 可以在 pass 规则增加 rdr-to 规则，可省去第一条规则，可参阅 <a href="https://man.openbsd.org/pf.conf">OpenBSD 文档</a>。macOS 中的 PF 与 FreeBSD 的更加相似。</p><div class="code-highlight">
+  <table>
+    <tbody>
+      <tr>
+        <td class="code-highlight-line"><pre class="language-none"><code class="language-none"><span>1</span>
+<span>2</span>
+<span>3</span>
+<span>4</span>
+<span>5</span>
+<span>6</span>
+<span>7</span>
+<span>8</span>
+<span>9</span>
+<span>10</span>
+<span>11</span>
+</code></pre></td>
+        <td class="code-highlight-code"><pre class="language-shell"><code class="language-shell"><span class="token comment"># Here it assumes that local network interface is en0.</span>
+<span class="token comment"># rdr rules could not work on local outbound traffic directly.</span>
+<span class="token comment"># Route en0's traffic to lo0, then the original outbound traffic becomes inbound traffic, and rdr rules work.</span>
+
+<span class="token comment"># Redirect traffic to proxy port</span>
+rdr on lo0 proto tcp from en0 to any -<span class="token operator">></span> <span class="token number">127.0</span>.0.1 port <span class="token variable">$PROXY_PORT</span>
+
+<span class="token comment"># Bypass remote proxy server addresses</span>
+pass out quick on en0 proto tcp from any to <span class="token variable">$SERVER_IP</span>
+<span class="token comment"># Route en0's traffic to lo0</span>
+pass out quick on en0 route-to lo0 proto tcp from any to any</code></pre></td>
+      </tr>
+    </tbody>
+  </table>
+</div><h2>
+  <a href="#获取目标 IP 地址" id="获取目标 IP 地址"></a>获取目标 IP 地址
+</h2><p>调用 <a href="https://www.freebsd.org/cgi/man.cgi?query=open(2)">open()</a> 以只读方式打开 PF 设备文件，如果需要动态地加入过滤规则可以使用可读写方式。之后，主要通过 <a href="https://www.freebsd.org/cgi/man.cgi?query=ioctl">ioctl(DIOCNATLOOK)</a> 实现，其它与 PF 设备相关动态的操作可参阅 <a href="https://www.freebsd.org/cgi/man.cgi?query=pf(4)">pf(4)</a>。实际上文档中的内容还是不够详细，直接在 <a href="https://github.com/freebsd/freebsd/blob/master/sys/net/pfvar.h">net/pfvar.h</a> 看结构体的声明反而更加直观。</p><div class="code-highlight">
+  <table>
+    <tbody>
+      <tr>
+        <td class="code-highlight-line"><pre class="language-none"><code class="language-none"><span>1</span>
+<span>2</span>
+<span>3</span>
+<span>4</span>
+<span>5</span>
+<span>6</span>
+<span>7</span>
+<span>8</span>
+<span>9</span>
+<span>10</span>
+<span>11</span>
+<span>12</span>
+<span>13</span>
+<span>14</span>
+<span>15</span>
+<span>16</span>
+<span>17</span>
+<span>18</span>
+<span>19</span>
+<span>20</span>
+<span>21</span>
+<span>22</span>
+<span>23</span>
+<span>24</span>
+<span>25</span>
+<span>26</span>
+<span>27</span>
+<span>28</span>
+<span>29</span>
+<span>30</span>
+<span>31</span>
+<span>32</span>
+<span>33</span>
+<span>34</span>
+<span>35</span>
+<span>36</span>
+<span>37</span>
+<span>38</span>
+<span>39</span>
+<span>40</span>
+<span>41</span>
+<span>42</span>
+<span>43</span>
+<span>44</span>
+<span>45</span>
+<span>46</span>
+<span>47</span>
+<span>48</span>
+<span>49</span>
+<span>50</span>
+<span>51</span>
+<span>52</span>
+<span>53</span>
+<span>54</span>
+<span>55</span>
+<span>56</span>
+<span>57</span>
+<span>58</span>
+<span>59</span>
+<span>60</span>
+<span>61</span>
+<span>62</span>
+<span>63</span>
+<span>64</span>
+<span>65</span>
+<span>66</span>
+<span>67</span>
+<span>68</span>
+<span>69</span>
+<span>70</span>
+<span>71</span>
+<span>72</span>
+<span>73</span>
+<span>74</span>
+<span>75</span>
+<span>76</span>
+<span>77</span>
+<span>78</span>
+<span>79</span>
+<span>80</span>
+<span>81</span>
+<span>82</span>
+<span>83</span>
+<span>84</span>
+<span>85</span>
+<span>86</span>
+<span>87</span>
+<span>88</span>
+<span>89</span>
+<span>90</span>
+<span>91</span>
+<span>92</span>
+<span>93</span>
+<span>94</span>
+</code></pre></td>
+        <td class="code-highlight-code"><pre class="language-c"><code class="language-c"><span class="token macro property">#<span class="token directive keyword">include</span> <span class="token string">&lt;errno.h></span></span>
+<span class="token macro property">#<span class="token directive keyword">include</span> <span class="token string">&lt;string.h></span></span>
+<span class="token macro property">#<span class="token directive keyword">include</span> <span class="token string">&lt;strings.h></span></span>
+<span class="token macro property">#<span class="token directive keyword">include</span> <span class="token string">&lt;fcntl.h></span></span>
+<span class="token macro property">#<span class="token directive keyword">include</span> <span class="token string">&lt;sys/types.h></span></span>
+<span class="token macro property">#<span class="token directive keyword">include</span> <span class="token string">&lt;sys/socket.h></span></span>
+<span class="token macro property">#<span class="token directive keyword">include</span> <span class="token string">&lt;sys/ioctl.h></span></span>
+<span class="token macro property">#<span class="token directive keyword">ifdef</span> __APPLE__</span>
+<span class="token macro property">#<span class="token directive keyword">define</span> PRIVATE</span>
+<span class="token macro property">#<span class="token directive keyword">endif</span></span>
+<span class="token macro property">#<span class="token directive keyword">include</span> <span class="token string">&lt;net/pfvar.h></span></span>
+<span class="token macro property">#<span class="token directive keyword">ifdef</span> __APPLE__</span>
+<span class="token macro property">#<span class="token directive keyword">undef</span> PRIVATE</span>
+<span class="token macro property">#<span class="token directive keyword">endif</span></span>
+
+<span class="token keyword">static</span> <span class="token keyword">int</span> pffd <span class="token operator">=</span> <span class="token operator">-</span><span class="token number">1</span><span class="token punctuation">;</span>
+
+<span class="token keyword">static</span> <span class="token keyword">int</span>
+<span class="token function">pf_init</span><span class="token punctuation">(</span><span class="token keyword">void</span><span class="token punctuation">)</span> <span class="token punctuation">{</span>
+  pffd <span class="token operator">=</span> <span class="token function">open</span><span class="token punctuation">(</span><span class="token string">"/dev/pf"</span><span class="token punctuation">,</span> O_RDONLY<span class="token punctuation">)</span><span class="token punctuation">;</span>
+  <span class="token keyword">if</span> <span class="token punctuation">(</span>pffd<span class="token punctuation">)</span> <span class="token punctuation">{</span>
+    <span class="token function">log_printf</span><span class="token punctuation">(</span><span class="token string">"%s - open(\"/dev/pf\"): %s\n"</span><span class="token punctuation">,</span> <span class="token constant">__func__</span><span class="token punctuation">,</span> <span class="token function">strerror</span><span class="token punctuation">(</span>errno<span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+    <span class="token keyword">return</span> <span class="token operator">-</span><span class="token number">1</span><span class="token punctuation">;</span>
+  <span class="token punctuation">}</span>
+  <span class="token keyword">if</span> <span class="token punctuation">(</span><span class="token function">fcntl</span><span class="token punctuation">(</span>pffd<span class="token punctuation">,</span> F_SETFD<span class="token punctuation">,</span> <span class="token function">fcntl</span><span class="token punctuation">(</span>pffd<span class="token punctuation">,</span> F_GETFD<span class="token punctuation">)</span> <span class="token operator">|</span> FD_CLOEXEC<span class="token punctuation">)</span><span class="token punctuation">)</span> <span class="token punctuation">{</span>
+    <span class="token function">log_printf</span><span class="token punctuation">(</span><span class="token string">"%s - fcntl(F_SETFD): %s\n"</span><span class="token punctuation">,</span> <span class="token constant">__func__</span><span class="token punctuation">,</span> <span class="token function">strerror</span><span class="token punctuation">(</span>errno<span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+    <span class="token keyword">return</span> <span class="token operator">-</span><span class="token number">1</span><span class="token punctuation">;</span>
+  <span class="token punctuation">}</span>
+  <span class="token keyword">return</span> <span class="token number">0</span><span class="token punctuation">;</span>
+<span class="token punctuation">}</span>
+
+<span class="token keyword">static</span> <span class="token keyword">int</span>
+<span class="token function">get_dst_addr</span><span class="token punctuation">(</span><span class="token keyword">int</span> fd<span class="token punctuation">,</span> <span class="token keyword">struct</span> <span class="token class-name">sockaddr</span> <span class="token operator">*</span>dst_addr<span class="token punctuation">,</span> socklen_t <span class="token operator">*</span>dst_addrlen<span class="token punctuation">,</span>
+             <span class="token keyword">struct</span> <span class="token class-name">sockaddr</span> <span class="token operator">*</span>client_addr<span class="token punctuation">,</span> <span class="token keyword">struct</span> <span class="token class-name">sockaddr</span> <span class="token operator">*</span>local_addr<span class="token punctuation">,</span>
+             sa_family_t sa_type<span class="token punctuation">)</span> <span class="token punctuation">{</span>
+<span class="token macro property">#<span class="token directive keyword">ifdef</span> __APPLE__</span>
+<span class="token macro property">#<span class="token directive keyword">define</span> sport sxport.port</span>
+<span class="token macro property">#<span class="token directive keyword">define</span> dport dxport.port</span>
+<span class="token macro property">#<span class="token directive keyword">define</span> rdport rdxport.port</span>
+<span class="token macro property">#<span class="token directive keyword">ifdef</span> v4addr </span><span class="token comment">// XNU 4570.1.46 and later (macOS 10.13+, iOS 11+)</span>
+<span class="token macro property">#<span class="token directive keyword">define</span> v4 v4addr</span>
+<span class="token macro property">#<span class="token directive keyword">define</span> v6 v6addr</span>
+<span class="token macro property">#<span class="token directive keyword">endif</span> </span><span class="token comment">// XNU 4570.1.46 and later (macOS 10.13+, iOS 11+)</span>
+<span class="token macro property">#<span class="token directive keyword">endif</span> </span><span class="token comment">// __APPLE__</span>
+  <span class="token keyword">struct</span> <span class="token class-name">pfioc_natlook</span> pnl<span class="token punctuation">;</span>
+
+  <span class="token function">bzero</span><span class="token punctuation">(</span><span class="token operator">&amp;</span>pnl<span class="token punctuation">,</span> <span class="token keyword">sizeof</span><span class="token punctuation">(</span>pnl<span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+  pnl<span class="token punctuation">.</span>af <span class="token operator">=</span> sa_type<span class="token punctuation">;</span>
+  <span class="token keyword">if</span> <span class="token punctuation">(</span>sa_type <span class="token operator">==</span> AF_INET<span class="token punctuation">)</span> <span class="token punctuation">{</span>
+    <span class="token keyword">struct</span> <span class="token class-name">sockaddr_in</span> <span class="token operator">*</span>src_addr <span class="token operator">=</span> <span class="token punctuation">(</span><span class="token keyword">struct</span> <span class="token class-name">sockaddr_in</span> <span class="token operator">*</span><span class="token punctuation">)</span>client_addr<span class="token punctuation">;</span>
+    <span class="token keyword">struct</span> <span class="token class-name">sockaddr_in</span> <span class="token operator">*</span>bind_addr <span class="token operator">=</span> <span class="token punctuation">(</span><span class="token keyword">struct</span> <span class="token class-name">sockaddr_in</span> <span class="token operator">*</span><span class="token punctuation">)</span>local_addr<span class="token punctuation">;</span>
+    <span class="token function">bcopy</span><span class="token punctuation">(</span><span class="token operator">&amp;</span>src_addr<span class="token operator">-></span>sin_addr<span class="token punctuation">,</span> <span class="token operator">&amp;</span>pnl<span class="token punctuation">.</span>saddr<span class="token punctuation">.</span>v4<span class="token punctuation">,</span> <span class="token keyword">sizeof</span><span class="token punctuation">(</span>pnl<span class="token punctuation">.</span>saddr<span class="token punctuation">.</span>v4<span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+    pnl<span class="token punctuation">.</span>sport <span class="token operator">=</span> src_addr<span class="token operator">-></span>sin_port<span class="token punctuation">;</span>
+    <span class="token function">bcopy</span><span class="token punctuation">(</span><span class="token operator">&amp;</span>bind_addr<span class="token operator">-></span>sin_addr<span class="token punctuation">,</span> <span class="token operator">&amp;</span>pnl<span class="token punctuation">.</span>daddr<span class="token punctuation">.</span>v4<span class="token punctuation">,</span> <span class="token keyword">sizeof</span><span class="token punctuation">(</span>pnl<span class="token punctuation">.</span>daddr<span class="token punctuation">.</span>v4<span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+    pnl<span class="token punctuation">.</span>dport <span class="token operator">=</span> bind_addr<span class="token operator">-></span>sin_port<span class="token punctuation">;</span>
+  <span class="token punctuation">}</span> <span class="token keyword">else</span> <span class="token keyword">if</span> <span class="token punctuation">(</span>sa_type <span class="token operator">==</span> AF_INET6<span class="token punctuation">)</span> <span class="token punctuation">{</span>
+    <span class="token keyword">struct</span> <span class="token class-name">sockaddr_in6</span> <span class="token operator">*</span>src_addr <span class="token operator">=</span> <span class="token punctuation">(</span><span class="token keyword">struct</span> <span class="token class-name">sockaddr_in6</span> <span class="token operator">*</span><span class="token punctuation">)</span>client_addr<span class="token punctuation">;</span>
+    <span class="token keyword">struct</span> <span class="token class-name">sockaddr_in6</span> <span class="token operator">*</span>bind_addr <span class="token operator">=</span> <span class="token punctuation">(</span><span class="token keyword">struct</span> <span class="token class-name">sockaddr_in6</span> <span class="token operator">*</span><span class="token punctuation">)</span>local_addr<span class="token punctuation">;</span>
+    <span class="token function">bcopy</span><span class="token punctuation">(</span><span class="token operator">&amp;</span>src_addr<span class="token operator">-></span>sin6_addr<span class="token punctuation">,</span> <span class="token operator">&amp;</span>pnl<span class="token punctuation">.</span>saddr<span class="token punctuation">.</span>v6<span class="token punctuation">,</span> <span class="token keyword">sizeof</span><span class="token punctuation">(</span>pnl<span class="token punctuation">.</span>saddr<span class="token punctuation">.</span>v6<span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+    pnl<span class="token punctuation">.</span>sport <span class="token operator">=</span> src_addr<span class="token operator">-></span>sin6_port<span class="token punctuation">;</span>
+    <span class="token function">bcopy</span><span class="token punctuation">(</span><span class="token operator">&amp;</span>bind_addr<span class="token operator">-></span>sin6_addr<span class="token punctuation">,</span> <span class="token operator">&amp;</span>pnl<span class="token punctuation">.</span>daddr<span class="token punctuation">.</span>v6<span class="token punctuation">,</span> <span class="token keyword">sizeof</span><span class="token punctuation">(</span>pnl<span class="token punctuation">.</span>daddr<span class="token punctuation">.</span>v6<span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+    pnl<span class="token punctuation">.</span>dport <span class="token operator">=</span> bind_addr<span class="token operator">-></span>sin6_port<span class="token punctuation">;</span>
+  <span class="token punctuation">}</span>
+  pnl<span class="token punctuation">.</span>proto <span class="token operator">=</span> IPPROTO_TCP<span class="token punctuation">;</span>
+  pnl<span class="token punctuation">.</span>direction <span class="token operator">=</span> PF_OUT<span class="token punctuation">;</span>
+
+  <span class="token keyword">if</span> <span class="token punctuation">(</span><span class="token function">ioctl</span><span class="token punctuation">(</span>pffd<span class="token punctuation">,</span> DIOCNATLOOK<span class="token punctuation">,</span> <span class="token operator">&amp;</span>pnl<span class="token punctuation">)</span><span class="token punctuation">)</span> <span class="token punctuation">{</span>
+    <span class="token function">log_printf</span><span class="token punctuation">(</span><span class="token string">"%s - ioctl(DIOCNATLOOK): %s\n"</span><span class="token punctuation">,</span> <span class="token constant">__func__</span><span class="token punctuation">,</span> <span class="token function">strerror</span><span class="token punctuation">(</span>errno<span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+    <span class="token keyword">return</span> <span class="token operator">-</span><span class="token number">1</span><span class="token punctuation">;</span>
+  <span class="token punctuation">}</span>
+
+  <span class="token keyword">if</span> <span class="token punctuation">(</span>sa_type <span class="token operator">==</span> AF_INET<span class="token punctuation">)</span> <span class="token punctuation">{</span>
+    <span class="token keyword">struct</span> <span class="token class-name">sockaddr_in</span> <span class="token operator">*</span>dst_addr_in <span class="token operator">=</span> <span class="token punctuation">(</span><span class="token keyword">struct</span> <span class="token class-name">sockaddr_in</span> <span class="token operator">*</span><span class="token punctuation">)</span>dst_addr<span class="token punctuation">;</span>
+    dst_addr_in<span class="token operator">-></span>sin_family <span class="token operator">=</span> sa_type<span class="token punctuation">;</span>
+    <span class="token function">bcopy</span><span class="token punctuation">(</span><span class="token operator">&amp;</span>pnl<span class="token punctuation">.</span>rdaddr<span class="token punctuation">.</span>v4<span class="token punctuation">,</span> <span class="token operator">&amp;</span>dst_addr_in<span class="token operator">-></span>sin_addr<span class="token punctuation">,</span> <span class="token keyword">sizeof</span><span class="token punctuation">(</span>dst_addr_in<span class="token operator">-></span>sin_addr<span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+    dst_addr_in<span class="token operator">-></span>sin_port <span class="token operator">=</span> pnl<span class="token punctuation">.</span>rdport<span class="token punctuation">;</span>
+  <span class="token punctuation">}</span> <span class="token keyword">else</span> <span class="token keyword">if</span> <span class="token punctuation">(</span>sa_type <span class="token operator">==</span> AF_INET6<span class="token punctuation">)</span> <span class="token punctuation">{</span>
+    <span class="token keyword">struct</span> <span class="token class-name">sockaddr_in6</span> <span class="token operator">*</span>dst_addr_in6 <span class="token operator">=</span> <span class="token punctuation">(</span><span class="token keyword">struct</span> <span class="token class-name">sockaddr_in6</span> <span class="token operator">*</span><span class="token punctuation">)</span>dst_addr<span class="token punctuation">;</span>
+    dst_addr_in6<span class="token operator">-></span>sin6_family <span class="token operator">=</span> sa_type<span class="token punctuation">;</span>
+    <span class="token function">bcopy</span><span class="token punctuation">(</span><span class="token operator">&amp;</span>pnl<span class="token punctuation">.</span>rdaddr<span class="token punctuation">.</span>v6<span class="token punctuation">,</span> <span class="token operator">&amp;</span>dst_addr_in6<span class="token operator">-></span>sin6_addr<span class="token punctuation">,</span> <span class="token keyword">sizeof</span><span class="token punctuation">(</span>dst_addr_in6<span class="token operator">-></span>sin6_addr<span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+    dst_addr_in6<span class="token operator">-></span>sin6_port <span class="token operator">=</span> pnl<span class="token punctuation">.</span>rdport<span class="token punctuation">;</span>
+  <span class="token punctuation">}</span>
+
+  <span class="token keyword">return</span> <span class="token number">0</span><span class="token punctuation">;</span>
+<span class="token macro property">#<span class="token directive keyword">ifdef</span> __APPLE__</span>
+<span class="token macro property">#<span class="token directive keyword">undef</span> sport</span>
+<span class="token macro property">#<span class="token directive keyword">undef</span> dport</span>
+<span class="token macro property">#<span class="token directive keyword">undef</span> rdport</span>
+<span class="token macro property">#<span class="token directive keyword">ifdef</span> v4addr </span><span class="token comment">// XNU 4570.1.46 and later (macOS 10.13+, iOS 11+)</span>
+<span class="token macro property">#<span class="token directive keyword">undef</span> v4</span>
+<span class="token macro property">#<span class="token directive keyword">undef</span> v6</span>
+<span class="token macro property">#<span class="token directive keyword">endif</span> </span><span class="token comment">// XNU 4570.1.46 and later (macOS 10.13+, iOS 11+)</span>
+<span class="token macro property">#<span class="token directive keyword">endif</span> </span><span class="token comment">// __APPLE__</span>
+<span class="token punctuation">}</span></code></pre></td>
+      </tr>
+    </tbody>
+  </table>
+</div><h1>
+  <a href="#IPFilter" id="IPFilter"></a>IPFilter
+</h1><p>应用于 FreeBSD 2.2+、NetBSD 1.2+、Solaris 10+、illumos 和 QNX。</p><p><a href="https://www.freebsd.org/cgi/man.cgi?query=ipf(5)">IPFilter 过滤规则</a>语法看起来与 PF 差不多，我还没仔细看，<a href="https://www.freebsd.org/doc/handbook/firewalls-ipf.html">FreeBSD</a> 文档也可以作为参考。</p><p>获取目标 IP 地址流程也差不多，打开设备文件，然后 <a href="https://www.freebsd.org/cgi/man.cgi?query=ioctl">ioctl(SIOCGNATL)</a> ，参阅 <a href="https://www.freebsd.org/cgi/man.cgi?query=ipnat(4)">ipnat(4)</a>。</p><div class="code-highlight">
+  <table>
+    <tbody>
+      <tr>
+        <td class="code-highlight-line"><pre class="language-none"><code class="language-none"><span>1</span>
+<span>2</span>
+<span>3</span>
+<span>4</span>
+<span>5</span>
+<span>6</span>
+<span>7</span>
+<span>8</span>
+<span>9</span>
+<span>10</span>
+<span>11</span>
+<span>12</span>
+<span>13</span>
+<span>14</span>
+<span>15</span>
+<span>16</span>
+<span>17</span>
+<span>18</span>
+<span>19</span>
+<span>20</span>
+<span>21</span>
+<span>22</span>
+<span>23</span>
+<span>24</span>
+<span>25</span>
+<span>26</span>
+<span>27</span>
+<span>28</span>
+<span>29</span>
+<span>30</span>
+<span>31</span>
+<span>32</span>
+<span>33</span>
+<span>34</span>
+<span>35</span>
+<span>36</span>
+<span>37</span>
+<span>38</span>
+<span>39</span>
+<span>40</span>
+<span>41</span>
+<span>42</span>
+<span>43</span>
+<span>44</span>
+<span>45</span>
+<span>46</span>
+<span>47</span>
+<span>48</span>
+<span>49</span>
+<span>50</span>
+<span>51</span>
+<span>52</span>
+<span>53</span>
+<span>54</span>
+<span>55</span>
+<span>56</span>
+<span>57</span>
+<span>58</span>
+<span>59</span>
+<span>60</span>
+<span>61</span>
+<span>62</span>
+<span>63</span>
+<span>64</span>
+<span>65</span>
+<span>66</span>
+</code></pre></td>
+        <td class="code-highlight-code"><pre class="language-c"><code class="language-c"><span class="token macro property">#<span class="token directive keyword">include</span> <span class="token string">&lt;errno.h></span></span>
+<span class="token macro property">#<span class="token directive keyword">include</span> <span class="token string">&lt;string.h></span></span>
+<span class="token macro property">#<span class="token directive keyword">include</span> <span class="token string">&lt;strings.h></span></span>
+<span class="token macro property">#<span class="token directive keyword">include</span> <span class="token string">&lt;fcntl.h></span></span>
+<span class="token macro property">#<span class="token directive keyword">include</span> <span class="token string">&lt;sys/types.h></span></span>
+<span class="token macro property">#<span class="token directive keyword">include</span> <span class="token string">&lt;sys/socket.h></span></span>
+<span class="token macro property">#<span class="token directive keyword">include</span> <span class="token string">&lt;netinet/ipl.h></span></span>
+<span class="token macro property">#<span class="token directive keyword">include</span> <span class="token string">&lt;netinet/ip_compat.h></span></span>
+<span class="token macro property">#<span class="token directive keyword">include</span> <span class="token string">&lt;netinet/ip_fil.h></span></span>
+<span class="token macro property">#<span class="token directive keyword">include</span> <span class="token string">&lt;netinet/ip_nat.h></span></span>
+
+<span class="token keyword">static</span> <span class="token keyword">int</span> ipfilter_fd <span class="token operator">=</span> <span class="token operator">-</span><span class="token number">1</span><span class="token punctuation">;</span>
+
+<span class="token keyword">static</span> <span class="token keyword">int</span>
+<span class="token function">ipfilter_init</span><span class="token punctuation">(</span><span class="token keyword">void</span><span class="token punctuation">)</span> <span class="token punctuation">{</span>
+  ipfilter_fd <span class="token operator">=</span> <span class="token function">open</span><span class="token punctuation">(</span>IPNAT_NAME<span class="token punctuation">,</span> O_RDONLY<span class="token punctuation">)</span><span class="token punctuation">;</span>
+  <span class="token keyword">if</span> <span class="token punctuation">(</span>ipfilter_fd<span class="token punctuation">)</span> <span class="token punctuation">{</span>
+    <span class="token function">log_printf</span><span class="token punctuation">(</span><span class="token string">"%s - open(IPNAT_NAME): %s\n"</span><span class="token punctuation">,</span> <span class="token constant">__func__</span><span class="token punctuation">,</span> <span class="token function">strerror</span><span class="token punctuation">(</span>errno<span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+    <span class="token keyword">return</span> <span class="token operator">-</span><span class="token number">1</span><span class="token punctuation">;</span>
+  <span class="token punctuation">}</span>
+  <span class="token keyword">if</span> <span class="token punctuation">(</span><span class="token function">fcntl</span><span class="token punctuation">(</span>ipfilter_fd<span class="token punctuation">,</span> F_SETFD<span class="token punctuation">,</span> <span class="token function">fcntl</span><span class="token punctuation">(</span>ipfilter_fd<span class="token punctuation">,</span> F_GETFD<span class="token punctuation">)</span> <span class="token operator">|</span> FD_CLOEXEC<span class="token punctuation">)</span><span class="token punctuation">)</span> <span class="token punctuation">{</span>
+    <span class="token function">log_printf</span><span class="token punctuation">(</span><span class="token string">"%s - fcntl(F_SETFD): %s\n"</span><span class="token punctuation">,</span> <span class="token constant">__func__</span><span class="token punctuation">,</span> <span class="token function">strerror</span><span class="token punctuation">(</span>errno<span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+    <span class="token keyword">return</span> <span class="token operator">-</span><span class="token number">1</span><span class="token punctuation">;</span>
+  <span class="token punctuation">}</span>
+  <span class="token keyword">return</span> <span class="token number">0</span><span class="token punctuation">;</span>
+<span class="token punctuation">}</span>
+
+<span class="token keyword">static</span> <span class="token keyword">int</span>
+<span class="token function">get_dst_addr</span><span class="token punctuation">(</span><span class="token keyword">int</span> fd<span class="token punctuation">,</span> <span class="token keyword">struct</span> <span class="token class-name">sockaddr</span> <span class="token operator">*</span>dst_addr<span class="token punctuation">,</span> socklen_t <span class="token operator">*</span>dst_addrlen<span class="token punctuation">,</span>
+             <span class="token keyword">struct</span> <span class="token class-name">sockaddr</span> <span class="token operator">*</span>client_addr<span class="token punctuation">,</span> <span class="token keyword">struct</span> <span class="token class-name">sockaddr</span> <span class="token operator">*</span>local_addr<span class="token punctuation">,</span>
+             sa_family_t sa_type<span class="token punctuation">)</span> <span class="token punctuation">{</span>
+  <span class="token keyword">struct</span> <span class="token class-name">natlookup</span> nl<span class="token punctuation">;</span>
+  <span class="token keyword">struct</span> <span class="token class-name">ipfobj</span> ipfo<span class="token punctuation">;</span>
+
+  <span class="token function">bzero</span><span class="token punctuation">(</span><span class="token operator">&amp;</span>nl<span class="token punctuation">,</span> <span class="token keyword">sizeof</span><span class="token punctuation">(</span>nl<span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+  <span class="token keyword">if</span> <span class="token punctuation">(</span>sa_type <span class="token operator">==</span> AF_INET<span class="token punctuation">)</span> <span class="token punctuation">{</span>
+    <span class="token keyword">struct</span> <span class="token class-name">sockaddr_in</span> <span class="token operator">*</span>src_addr <span class="token operator">=</span> <span class="token punctuation">(</span><span class="token keyword">struct</span> <span class="token class-name">sockaddr_in</span> <span class="token operator">*</span><span class="token punctuation">)</span>client_addr<span class="token punctuation">;</span>
+    <span class="token keyword">struct</span> <span class="token class-name">sockaddr_in</span> <span class="token operator">*</span>bind_addr <span class="token operator">=</span> <span class="token punctuation">(</span><span class="token keyword">struct</span> <span class="token class-name">sockaddr_in</span> <span class="token operator">*</span><span class="token punctuation">)</span>local_addr<span class="token punctuation">;</span>
+    nl<span class="token punctuation">.</span>nl_outip <span class="token operator">=</span> src_addr<span class="token operator">-></span>sin_addr<span class="token punctuation">;</span>
+    nl<span class="token punctuation">.</span>nl_outport <span class="token operator">=</span> src_addr<span class="token operator">-></span>sin_port<span class="token punctuation">;</span>
+    nl<span class="token punctuation">.</span>nl_inip <span class="token operator">=</span> bind_addr<span class="token operator">-></span>sin_addr<span class="token punctuation">;</span>
+    nl<span class="token punctuation">.</span>nl_inport <span class="token operator">=</span> bind_addr<span class="token operator">-></span>sin_port<span class="token punctuation">;</span>
+  <span class="token punctuation">}</span> <span class="token keyword">else</span> <span class="token punctuation">{</span>
+    <span class="token function">log_printf</span><span class="token punctuation">(</span><span class="token string">"The IPFilter does not support IPv6 NAT lookup.\n"</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+    <span class="token keyword">return</span> <span class="token operator">-</span><span class="token number">1</span><span class="token punctuation">;</span>
+  <span class="token punctuation">}</span>
+  nl<span class="token punctuation">.</span>nl_flags <span class="token operator">=</span> IPN_TCP<span class="token punctuation">;</span>
+
+  <span class="token function">bzero</span><span class="token punctuation">(</span><span class="token operator">&amp;</span>ipfo<span class="token punctuation">,</span> <span class="token keyword">sizeof</span><span class="token punctuation">(</span>ipfo<span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+  ipfo<span class="token punctuation">.</span>ipfo_rev <span class="token operator">=</span> IPFILTER_VERSION<span class="token punctuation">;</span>
+  ipfo<span class="token punctuation">.</span>ipfo_size <span class="token operator">=</span> <span class="token keyword">sizeof</span><span class="token punctuation">(</span>nl<span class="token punctuation">)</span><span class="token punctuation">;</span>
+  ipfo<span class="token punctuation">.</span>ipfo_ptr <span class="token operator">=</span> <span class="token operator">&amp;</span>nl<span class="token punctuation">;</span>
+  ipfo<span class="token punctuation">.</span>ipfo_type <span class="token operator">=</span> IPFOBJ_NATLOOKUP<span class="token punctuation">;</span>
+
+  <span class="token keyword">if</span> <span class="token punctuation">(</span><span class="token function">ioctl</span><span class="token punctuation">(</span>ipfilter_fd<span class="token punctuation">,</span> SIOCGNATL<span class="token punctuation">,</span> <span class="token operator">&amp;</span>ipfo<span class="token punctuation">)</span><span class="token punctuation">)</span> <span class="token punctuation">{</span>
+    <span class="token function">log_printf</span><span class="token punctuation">(</span><span class="token string">"%s - ioctl(SIOCGNATL): %s\n"</span><span class="token punctuation">,</span> <span class="token constant">__func__</span><span class="token punctuation">,</span> <span class="token function">strerror</span><span class="token punctuation">(</span>errno<span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+    <span class="token keyword">return</span> <span class="token operator">-</span><span class="token number">1</span><span class="token punctuation">;</span>
+  <span class="token punctuation">}</span>
+
+  <span class="token keyword">struct</span> <span class="token class-name">sockaddr_in</span> <span class="token operator">*</span>dst_addr_in <span class="token operator">=</span> <span class="token punctuation">(</span><span class="token keyword">struct</span> <span class="token class-name">sockaddr_in</span> <span class="token operator">*</span><span class="token punctuation">)</span>dst_addr<span class="token punctuation">;</span>
+  dst_addr_in<span class="token operator">-></span>sin_family <span class="token operator">=</span> AF_INET<span class="token punctuation">;</span>
+  dst_addr_in<span class="token operator">-></span>sin_addr <span class="token operator">=</span> nl<span class="token punctuation">.</span>nl_realip<span class="token punctuation">;</span>
+  dst_addr_in<span class="token operator">-></span>sin_port <span class="token operator">=</span> nl<span class="token punctuation">.</span>nl_realport<span class="token punctuation">;</span>
+
+  <span class="token keyword">return</span> <span class="token number">0</span><span class="token punctuation">;</span>
+<span class="token punctuation">}</span></code></pre></td>
+      </tr>
+    </tbody>
+  </table>
+</div><h1>
+  <a href="#IPFW" id="IPFW"></a>IPFW
+</h1><p>出自 FreeBSD，应用于 FreeBSD、macOS 10.6-（macOS 10.10 完全移除），也曾被用于 Linux kernel 1.1，为 Linux 第一代防火墙。</p><p><a href="https://www.freebsd.org/cgi/man.cgi?query=ipfw">IPFW 过滤规则</a>暂时还没看，可参考 <a href="https://www.freebsd.org/doc/handbook/firewalls-ipfw.html">FreeBSD IPFW 相关文档</a>。</p><p>原目标 IP 地址的获取与上文 Netfilter 的 TPROXY 方案一样。</p><div class="code-highlight">
+  <table>
+    <tbody>
+      <tr>
+        <td class="code-highlight-line"><pre class="language-none"><code class="language-none"><span>1</span>
+<span>2</span>
+<span>3</span>
+<span>4</span>
+<span>5</span>
+<span>6</span>
+<span>7</span>
+<span>8</span>
+<span>9</span>
+<span>10</span>
+<span>11</span>
+<span>12</span>
+<span>13</span>
+</code></pre></td>
+        <td class="code-highlight-code"><pre class="language-c"><code class="language-c"><span class="token macro property">#<span class="token directive keyword">include</span> <span class="token string">&lt;errno.h></span></span>
+<span class="token macro property">#<span class="token directive keyword">include</span> <span class="token string">&lt;string.h></span></span>
+<span class="token macro property">#<span class="token directive keyword">include</span> <span class="token string">&lt;sys/types.h></span></span>
+<span class="token macro property">#<span class="token directive keyword">include</span> <span class="token string">&lt;sys/socket.h></span></span>
+
+<span class="token keyword">static</span> <span class="token keyword">int</span>
+<span class="token function">get_dst_addr</span><span class="token punctuation">(</span><span class="token keyword">int</span> fd<span class="token punctuation">,</span> <span class="token keyword">struct</span> <span class="token class-name">sockaddr</span> <span class="token operator">*</span>dst_addr<span class="token punctuation">,</span> socklen_t <span class="token operator">*</span>dst_addrlen<span class="token punctuation">)</span> <span class="token punctuation">{</span>
+  <span class="token keyword">if</span> <span class="token punctuation">(</span><span class="token function">getsockname</span><span class="token punctuation">(</span>fd<span class="token punctuation">,</span> dst_addr<span class="token punctuation">,</span> dst_addrlen<span class="token punctuation">)</span><span class="token punctuation">)</span> <span class="token punctuation">{</span>
+    <span class="token function">log_printf</span><span class="token punctuation">(</span><span class="token string">"%s - getsockname(dst_addr): %s\n"</span><span class="token punctuation">,</span> <span class="token constant">__func__</span><span class="token punctuation">,</span> <span class="token function">strerror</span><span class="token punctuation">(</span>errno<span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+    <span class="token keyword">return</span> <span class="token operator">-</span><span class="token number">1</span><span class="token punctuation">;</span>
+  <span class="token punctuation">}</span>
+  <span class="token keyword">return</span> <span class="token number">0</span><span class="token punctuation">;</span>
+<span class="token punctuation">}</span></code></pre></td>
+      </tr>
+    </tbody>
+  </table>
+</div><h1>
+  <a href="#NPF" id="NPF"></a>NPF
+</h1><p>出自 NetBSD，应用于 NetBSD 6.0+。</p><p><a href="https://rmind.github.io/npf/configuration.html">规则设置文档</a></p><p>提供的部分 API 可参考文档 <a href="http://netbsd.gw.com/cgi-bin/man-cgi?libnpf">libnpf(3)</a>，但是并不齐全，以下用到的 npf_nat_lookup() 就没有列举在其中，直接看源码——<a href="https://github.com/NetBSD/src/blob/trunk/lib/libnpf/npf.h">lib/libnpf/npf.h</a>、<a href="https://github.com/NetBSD/src/blob/trunk/lib/libnpf/npf.c">lib/libnpf/npf.c</a>。</p><p>以下 get_dst_addr() 中的 dst_addr 为 inout 参数，应传入 client_addr，调用函数后其值为所需的 dst_addr。</p><div class="code-highlight">
+  <table>
+    <tbody>
+      <tr>
+        <td class="code-highlight-line"><pre class="language-none"><code class="language-none"><span>1</span>
+<span>2</span>
+<span>3</span>
+<span>4</span>
+<span>5</span>
+<span>6</span>
+<span>7</span>
+<span>8</span>
+<span>9</span>
+<span>10</span>
+<span>11</span>
+<span>12</span>
+<span>13</span>
+<span>14</span>
+<span>15</span>
+<span>16</span>
+<span>17</span>
+<span>18</span>
+<span>19</span>
+<span>20</span>
+<span>21</span>
+<span>22</span>
+<span>23</span>
+<span>24</span>
+<span>25</span>
+<span>26</span>
+<span>27</span>
+<span>28</span>
+<span>29</span>
+<span>30</span>
+<span>31</span>
+<span>32</span>
+<span>33</span>
+<span>34</span>
+<span>35</span>
+<span>36</span>
+<span>37</span>
+<span>38</span>
+<span>39</span>
+<span>40</span>
+<span>41</span>
+<span>42</span>
+<span>43</span>
+</code></pre></td>
+        <td class="code-highlight-code"><pre class="language-c"><code class="language-c"><span class="token macro property">#<span class="token directive keyword">include</span> <span class="token string">&lt;errno.h></span></span>
+<span class="token macro property">#<span class="token directive keyword">include</span> <span class="token string">&lt;string.h></span></span>
+<span class="token macro property">#<span class="token directive keyword">include</span> <span class="token string">&lt;sys/types.h></span></span>
+<span class="token macro property">#<span class="token directive keyword">include</span> <span class="token string">&lt;sys/socket.h></span></span>
+<span class="token macro property">#<span class="token directive keyword">include</span> <span class="token string">&lt;net/pfil.h></span></span>
+<span class="token macro property">#<span class="token directive keyword">include</span> <span class="token string">&lt;npf.h></span></span>
+
+<span class="token keyword">static</span> <span class="token keyword">int</span>
+<span class="token function">get_dst_addr</span><span class="token punctuation">(</span><span class="token keyword">int</span> fd<span class="token punctuation">,</span> <span class="token keyword">struct</span> <span class="token class-name">sockaddr</span> <span class="token operator">*</span>dst_addr<span class="token punctuation">,</span> <span class="token keyword">struct</span> <span class="token class-name">sockaddr</span> <span class="token operator">*</span>local_addr<span class="token punctuation">,</span> sa_family_t sa_type<span class="token punctuation">)</span> <span class="token punctuation">{</span>
+  npf_addr_t <span class="token operator">*</span>addr<span class="token punctuation">[</span><span class="token number">2</span><span class="token punctuation">]</span><span class="token punctuation">;</span>
+  in_port_t port<span class="token punctuation">[</span><span class="token number">2</span><span class="token punctuation">]</span><span class="token punctuation">;</span>
+
+  <span class="token keyword">if</span> <span class="token punctuation">(</span>sa_type <span class="token operator">==</span> AF_INET<span class="token punctuation">)</span> <span class="token punctuation">{</span>
+    <span class="token keyword">struct</span> <span class="token class-name">sockaddr_in</span> dst_addr_in <span class="token operator">=</span> <span class="token punctuation">(</span><span class="token keyword">struct</span> <span class="token class-name">sockaddr_in</span> <span class="token operator">*</span><span class="token punctuation">)</span>dst_addr<span class="token punctuation">;</span>
+    <span class="token keyword">struct</span> <span class="token class-name">sockaddr_in</span> local_addr_in <span class="token operator">=</span> <span class="token punctuation">(</span><span class="token keyword">struct</span> <span class="token class-name">sockaddr_in</span> <span class="token operator">*</span><span class="token punctuation">)</span>local_addr<span class="token punctuation">;</span>
+    addr<span class="token punctuation">[</span><span class="token number">0</span><span class="token punctuation">]</span> <span class="token operator">=</span> <span class="token punctuation">(</span>npf_addr_t <span class="token operator">*</span><span class="token punctuation">)</span><span class="token operator">&amp;</span>dst_addr_in<span class="token operator">-></span>sin_addr<span class="token punctuation">;</span>
+    port<span class="token punctuation">[</span><span class="token number">0</span><span class="token punctuation">]</span> <span class="token operator">=</span> dst_addr_in<span class="token operator">-></span>sin_port<span class="token punctuation">;</span>
+    addr<span class="token punctuation">[</span><span class="token number">1</span><span class="token punctuation">]</span> <span class="token operator">=</span> <span class="token punctuation">(</span>npf_addr_t <span class="token operator">*</span><span class="token punctuation">)</span><span class="token operator">&amp;</span>local_addr_in<span class="token operator">-></span>sin_addr<span class="token punctuation">;</span>
+    port<span class="token punctuation">[</span><span class="token number">1</span><span class="token punctuation">]</span> <span class="token operator">=</span> local_addr_in<span class="token operator">-></span>sin_port<span class="token punctuation">;</span>
+
+    <span class="token keyword">if</span> <span class="token punctuation">(</span><span class="token function">npf_nat_lookup</span><span class="token punctuation">(</span>fd<span class="token punctuation">,</span> AF_INET<span class="token punctuation">,</span> addr<span class="token punctuation">,</span> port<span class="token punctuation">,</span> IPPROTO_TCP<span class="token punctuation">,</span> PFIL_OUT<span class="token punctuation">)</span><span class="token punctuation">)</span> <span class="token punctuation">{</span>
+      <span class="token function">log_printf</span><span class="token punctuation">(</span><span class="token string">"%s - npf_nat_lookup(): %s\n"</span><span class="token punctuation">,</span> <span class="token constant">__func__</span><span class="token punctuation">,</span> <span class="token function">strerror</span><span class="token punctuation">(</span>errno<span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+      <span class="token keyword">return</span> <span class="token operator">-</span><span class="token number">1</span><span class="token punctuation">;</span>
+    <span class="token punctuation">}</span>
+    dst_addr_in<span class="token operator">-></span>sin_port <span class="token operator">=</span> port<span class="token punctuation">[</span><span class="token number">0</span><span class="token punctuation">]</span><span class="token punctuation">;</span>
+    local_addr_in<span class="token operator">-></span>sin_port <span class="token operator">=</span> port<span class="token punctuation">[</span><span class="token number">1</span><span class="token punctuation">]</span><span class="token punctuation">;</span>
+  <span class="token punctuation">}</span> <span class="token keyword">else</span> <span class="token keyword">if</span> <span class="token punctuation">(</span>sa_type <span class="token operator">==</span> AF_INET6<span class="token punctuation">)</span> <span class="token punctuation">{</span>
+    <span class="token keyword">struct</span> <span class="token class-name">sockaddr_in6</span> dst_addr_in6 <span class="token operator">=</span> <span class="token punctuation">(</span><span class="token keyword">struct</span> <span class="token class-name">sockaddr_in6</span> <span class="token operator">*</span><span class="token punctuation">)</span>dst_addr<span class="token punctuation">;</span>
+    <span class="token keyword">struct</span> <span class="token class-name">sockaddr_in6</span> local_addr_in6 <span class="token operator">=</span> <span class="token punctuation">(</span><span class="token keyword">struct</span> <span class="token class-name">sockaddr_in6</span> <span class="token operator">*</span><span class="token punctuation">)</span>local_addr<span class="token punctuation">;</span>
+    addr<span class="token punctuation">[</span><span class="token number">0</span><span class="token punctuation">]</span> <span class="token operator">=</span> <span class="token punctuation">(</span>npf_addr_t <span class="token operator">*</span><span class="token punctuation">)</span><span class="token operator">&amp;</span>dst_addr_in6<span class="token operator">-></span>sin6_addr<span class="token punctuation">;</span>
+    port<span class="token punctuation">[</span><span class="token number">0</span><span class="token punctuation">]</span> <span class="token operator">=</span> dst_addr_in6<span class="token operator">-></span>sin6_port<span class="token punctuation">;</span>
+    addr<span class="token punctuation">[</span><span class="token number">1</span><span class="token punctuation">]</span> <span class="token operator">=</span> <span class="token punctuation">(</span>npf_addr_t <span class="token operator">*</span><span class="token punctuation">)</span><span class="token operator">&amp;</span>local_addr_in6<span class="token operator">-></span>sin6_addr<span class="token punctuation">;</span>
+    port<span class="token punctuation">[</span><span class="token number">1</span><span class="token punctuation">]</span> <span class="token operator">=</span> local_addr_in6<span class="token operator">-></span>sin6_port<span class="token punctuation">;</span>
+
+    <span class="token keyword">if</span> <span class="token punctuation">(</span><span class="token function">npf_nat_lookup</span><span class="token punctuation">(</span>fd<span class="token punctuation">,</span> AF_INET<span class="token punctuation">,</span> addr<span class="token punctuation">,</span> port<span class="token punctuation">,</span> IPPROTO_TCP<span class="token punctuation">,</span> PFIL_OUT<span class="token punctuation">)</span><span class="token punctuation">)</span> <span class="token punctuation">{</span>
+      <span class="token function">log_printf</span><span class="token punctuation">(</span><span class="token string">"%s - npf_nat_lookup(): %s\n"</span><span class="token punctuation">,</span> <span class="token constant">__func__</span><span class="token punctuation">,</span> <span class="token function">strerror</span><span class="token punctuation">(</span>errno<span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+      <span class="token keyword">return</span> <span class="token operator">-</span><span class="token number">1</span><span class="token punctuation">;</span>
+    <span class="token punctuation">}</span>
+    dst_addr_in6<span class="token operator">-></span>sin6_port <span class="token operator">=</span> port<span class="token punctuation">[</span><span class="token number">0</span><span class="token punctuation">]</span><span class="token punctuation">;</span>
+    local_addr_in6<span class="token operator">-></span>sin6_port <span class="token operator">=</span> port<span class="token punctuation">[</span><span class="token number">1</span><span class="token punctuation">]</span><span class="token punctuation">;</span>
+  <span class="token punctuation">}</span>
+  <span class="token keyword">return</span> <span class="token number">0</span><span class="token punctuation">;</span>
+<span class="token punctuation">}</span></code></pre></td>
+      </tr>
+    </tbody>
+  </table>
+</div><h1>
+  <a href="#WFP" id="WFP"></a>WFP
+</h1><p>Windows 平台暂时没发现简单易用的透明代理方案，但是或许可以通过 <a href="https://docs.microsoft.com/en-us/windows/desktop/fwp/windows-filtering-platform-start-page">Windows Filtering Platform</a> 提供的 API 解决。</p><p><a href="https://docs.microsoft.com/en-us/windows-hardware/drivers/network/windows-filtering-platform-callout-drivers2">WFP 相关文档</a></p>
+</div>
+
+<div class="post-tags">
+
+  <a href="/tags/transparent proxy/">Transparent Proxy</a>
+
+</div>
+
+<div class="post-nav paginator">
+
+<a class="nav-prev" href="/posts/400973077.html">
+  <svg class="icon" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" width="30" height="30"><defs><style/></defs><path d="M576 672c-6.4 0-19.2 0-25.6-6.4l-128-128c-12.8-12.8-12.8-32 0-44.8l128-128c12.8-12.8 32-12.8 44.8 0s12.8 32 0 44.8L492.8 512l102.4 102.4c12.8 12.8 12.8 32 0 44.8 0 12.8-12.8 12.8-19.2 12.8z"/></svg>
+  基于 pixie-dust attack 的一次无线安全小测试
+</a>
+
+
+<a class="nav-next" href="/posts/391111597.html">
+  N-Queens Puzzle
+  <svg class="icon" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" width="30" height="30"><defs><style/></defs><path d="M448 672c-6.4 0-19.2 0-25.6-6.4-12.8-12.8-12.8-32 0-44.8L531.2 512 422.4 409.6c-12.8-12.8-12.8-32 0-44.8s32-12.8 44.8 0l128 128c12.8 12.8 12.8 32 0 44.8l-128 128c0 6.4-12.8 6.4-19.2 6.4z"/></svg>
+</a>
+
+</div>
+
+
+    </div>
+  </div>
+
+  <div class="footer">
+  <div>
+    <p>&copy; 2020 2EXP</p>
+    <p>Powered by <a target="_blank" href="https://github.com/acyortjs/acyort">AcyOrt</a></p>
+  </div>
+  <a href="#" class="top">Top</a>
+</div>
+
+</div>
+
+<script src="/assets/script.js"></script>
+</body>
+</html>
