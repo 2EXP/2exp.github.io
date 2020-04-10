@@ -50,4 +50,4 @@ jobs:
         ssh-add - <<< "${{ secrets.BLOG_DEPLOY_KEY }}"
     - name: Push Changes
       run: |
-        git push -q origin master
+        git push -q git@github.com:2EXP/2exp.github.io.git master
