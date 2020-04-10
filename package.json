@@ -1,0 +1,9 @@
+{
+  "private": true,
+  "name": "2exp",
+  "version": "1.0.0",
+  "description": "blog.2exp.net",
+  "dependencies": {
+    "@acyort/pigeon": "^0.2.0"
+  }
+}

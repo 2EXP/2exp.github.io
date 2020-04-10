@@ -1,0 +1,22 @@
+template: '@acyort/pigeon'
+
+plugins:
+  - hook.js
+  - '@acyort/pigeon'
+
+repository: 2EXP/2exp.github.io
+
+favicon: favicon.png
+
+public: public
+
+timezone: Asia/Shanghai
+
+menu:
+  archives: /archives/
+  tags: /tags/
+  about: /about/
+
+perpage: 5
+
+title: 2EXP
