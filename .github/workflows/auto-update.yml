@@ -11,10 +11,13 @@ jobs:
         node-version: [13.x]
 
     steps:
-    - name: Clone Blog Repo
+    - name: Checkout Blog Config Branch
+      uses: actions/checkout@v2
+      with:
+        ref: blog-config
+    - name: Fetch All Branches
       run: |
-        git clone https://github.com/2EXP/2exp.github.io.git --depth 1 blog-config
-        cd blog-config
+        git fetch --no-tags --prune --depth=1 origin +refs/heads/*:refs/remotes/origin/*
     - name: Use Node.js ${{ matrix.node-version }}
       uses: actions/setup-node@v1
       with:
@@ -50,4 +53,4 @@ jobs:
         ssh-add - <<< "${{ secrets.BLOG_DEPLOY_KEY }}"
     - name: Push Changes
       run: |
-        git push -q git@github.com:2EXP/2exp.github.io.git master
+        git push -q origin master
