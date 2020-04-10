@@ -1,4 +1,5 @@
 template: '@acyort/pigeon'
+description: To experience, to experiment, to explore, to expand, to be expert...
 
 plugins:
   - hook.js
