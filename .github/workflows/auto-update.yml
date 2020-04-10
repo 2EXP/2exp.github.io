@@ -29,7 +29,6 @@ jobs:
         git worktree add public master
     - name: Regenerate Public Static Data
       run: |
-        rm -rf ./public
         acyort flow
     - name: Copy Assets to Public Folder
       run: |
