@@ -11,10 +11,15 @@ jobs:
         node-version: [13.x]
 
     steps:
-    - name: Checkout Blog Config Branch
-      uses: actions/checkout@v2
-      with:
-        ref: blog-config
+    - name: Setup SSH
+      run: |
+        mkdir -p ~/.ssh
+        ssh-keyscan github.com >> ~/.ssh/known_hosts
+        ssh-add - <<< "${{ secrets.BLOG_DEPLOY_KEY }}"
+    - name: Clone Blog Repo
+      run: |
+        git clone git@github.com:2EXP/2exp.github.io.git --depth 1 blog-config
+        cd blog-config
     - name: Use Node.js ${{ matrix.node-version }}
       uses: actions/setup-node@v1
       with:
@@ -40,11 +45,6 @@ jobs:
         cd public
         git add --all
         git commit -m "Updated by github actions workflow auto-update.yml - `date +'%Y-%m-%d %H:%M:%S'`"
-    - name: Setup SSH
-      run: |
-        mkdir -p ~/.ssh
-        ssh-keyscan github.com >> ~/.ssh/known_hosts
-        ssh-add - <<< "${{ secrets.BLOG_DEPLOY_KEY }}"
     - name: Push Changes
       run: |
         git push -q origin master
