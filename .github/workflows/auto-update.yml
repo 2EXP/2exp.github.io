@@ -1,7 +1,6 @@
 name: Auto Update Blog
 
-on:
-  issues
+on: issues
    
 jobs:
   build:
