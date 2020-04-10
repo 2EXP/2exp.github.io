@@ -11,17 +11,9 @@ jobs:
         node-version: [13.x]
 
     steps:
-    - name: Setup SSH
-      env:
-        SSH_AUTH_SOCK: /tmp/ssh_agent.sock
-      run: |
-        mkdir -p ~/.ssh
-        ssh-keyscan github.com >> ~/.ssh/known_hosts
-        ssh-agent -a $SSH_AUTH_SOCK > /dev/null
-        ssh-add - <<< "${{ secrets.BLOG_DEPLOY_KEY }}"
     - name: Clone Blog Repo
       run: |
-        git clone git@github.com:2EXP/2exp.github.io.git --depth 1 blog-config
+        git clone https://github.com/2EXP/2exp.github.io.git --depth 1 blog-config
         cd blog-config
     - name: Use Node.js ${{ matrix.node-version }}
       uses: actions/setup-node@v1
@@ -48,6 +40,14 @@ jobs:
         cd public
         git add --all
         git commit -m "Updated by github actions workflow auto-update.yml - `date +'%Y-%m-%d %H:%M:%S'`"
+    - name: Setup SSH
+      env:
+        SSH_AUTH_SOCK: /tmp/ssh_agent.sock
+      run: |
+        mkdir -p ~/.ssh
+        ssh-keyscan github.com >> ~/.ssh/known_hosts
+        ssh-agent -a $SSH_AUTH_SOCK > /dev/null
+        ssh-add - <<< "${{ secrets.BLOG_DEPLOY_KEY }}"
     - name: Push Changes
       run: |
         git push -q origin master
