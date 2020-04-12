@@ -56,3 +56,6 @@ jobs:
     - name: Push Changes
       run: |
         git push -q origin master
+    - name: Remove Data
+      run: |
+        ls -Q | grep -v .github | xargs rm -rf
