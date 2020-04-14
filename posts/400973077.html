@@ -38,7 +38,7 @@
   
   <a href="/categories/blog/">blog</a>
   
-  - April 13, 2020
+  - April 14, 2020
 </p>
 
       <h2>
@@ -51,9 +51,14 @@
     <div>
     
 <div class="markdown-body">
-<h1>
+<hr>
+<p>date: 2019-01-19</p><h2>
+  <a href="#category: Wireless Security" id="category: Wireless Security"></a>category: Wireless Security
+</h2><h1>
   <a href="#无线攻击主流方案概述" id="无线攻击主流方案概述"></a>无线攻击主流方案概述
-</h1><p>整体上分为通用与非通用两类。</p><h2>
+</h1><p>整体上分为通用与非通用两类。</p><!-- more -->
+
+<h2>
   <a href="#通用" id="通用"></a>通用
 </h2><p>先进行 <a href="https://en.wikipedia.org/wiki/Wi-Fi_deauthentication_attack">Wi-Fi deauthentication attack</a>（使用 <a href="https://github.com/aircrack-ng/aircrack-ng">aircrack-ng</a> 套件中的 aireplay-ng 或其它类似工具），然而通过相关钓鱼工具（如 <a href="https://github.com/wifiphisher/wifiphisher">wifiphisher</a>）欺骗受攻击 AP 的客户端。</p><h2>
   <a href="#非通用" id="非通用"></a>非通用
@@ -66,7 +71,7 @@
   <a href="#pixie-dust attack" id="pixie-dust attack"></a>pixie-dust attack
 </h2><p>pixie-dust attack 是利用路由器芯片随机密钥（nonce）生成的漏洞（详情见 <a href="https://forums.kali.org/showthread.php?24286-WPS-Pixie-Dust-Attack-(Offline-WPS-Attack)">Kali 论坛</a>及论坛中的相关链接），离线破解 WPS PIN 的一种无线攻击方案。可用的攻击工具为 <a href="https://github.com/wiire-a/pixiewps">pixiewps</a>，结合 reaver/bully/Wireshark 使用。根据论坛相关讨论及论坛中测试的<a href="https://docs.google.com/spreadsheets/d/1tSlbqVQ59kGn8hgmwcPTHUECQ3o9YhXR91A_p7Nnj5Y">数据</a>显示，受影响芯片厂商主要为 Broadcom（博通）部分型号、Realtek（瑞昱）、Ralink（雷凌，联发科旗下）、MediaTek（联发科）、Celeno，其它厂商也可能有类似漏洞尚未发现。我个人知道的，Realtek 好像在 2016 年修复了该漏洞，其它的不清楚。如要查询自己设备的参数规格，可通过 <a href="https://wikidevi.com">WikiDevi</a> 查询。</p><h1>
   <a href="#国内光猫、家用路由器可靠性的一次小测试" id="国内光猫、家用路由器可靠性的一次小测试"></a>国内光猫、家用路由器可靠性的一次小测试
-</h1><p>主要测试针对 pixie-dust attack，家用路由器的可靠性。就只简单测试了下中兴某电信光猫、小米某路由器、华为某路由器（应该是 2017 年的），中兴、小米的是联发科芯片，华为的是 Realtek 芯片。对中兴、小米的攻击迅速见效，华为的好像不行；由于设备有限，得出的结论只能说是个例，而且这更应该说是上游芯片厂商的坑。额外的传统 WPS PIN 在线攻击测试中，中兴光猫、小米路由器都不是常见的锁 PIN，而是直接关掉 WPS，这对于安全性还是有一定提升的，虽然对于前面的离线攻击无法防范。此外，由于中兴的是电信光猫，安全性其实更弱一些，因为 ISP 附带的光猫有默认的超级管理员账号，当攻击者得到了无线密码，直接就可以进入光猫管理 Web 界面，甚至可以 telnet 后以 root 权限进行一系列操作。</p><p>总之，要让家里的无线信号安全可靠，设置较复杂的 WPA 密码，关闭 WPS 很有必要，虽然 WPS 在家里有打印机等外部设备时可能会用到。网上看到好像有些光猫无法关闭 WPS，这样出于安全性考虑的话，应该关闭光猫 AP 功能，另外接一个路由器。</p>
+</h1><p>主要测试针对 pixie-dust attack，家用路由器的可靠性。就只简单测试了下某 ISP 光猫、两个品牌路由器，其中两个是联发科芯片，一个是 Realtek 芯片。对前两者的攻击迅速见效，后者则不行；由于设备有限，得出的结论只能说是个例，而且这更应该说是上游芯片厂商的坑。额外的传统 WPS PIN 在线攻击测试中，前两者都不是常见的锁 PIN，而是直接关掉 WPS，这对于安全性还是有一定提升的，虽然对于前面的离线攻击无法防范。此外，由于其中一个是 ISP 光猫，安全性其实更弱一些，因为 ISP 附带的光猫有默认的超级管理员账号，当攻击者得到了无线密码，直接就可以进入光猫管理 Web 界面，甚至可以 telnet 后以 root 权限进行一系列操作。</p><p>总之，要让家里的无线信号安全可靠，设置较复杂的 WPA 密码，关闭 WPS 很有必要，虽然 WPS 在家里有打印机等外部设备时可能会用到。网上看到好像有些光猫无法关闭 WPS，这样出于安全性考虑的话，应该关闭光猫 AP 功能，另外接一个路由器。</p>
 </div>
 
 <div class="post-tags">
